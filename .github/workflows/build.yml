@@ -1,1 +1,59 @@
+name: Build and Release
 
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build server.jar
+        run: mvn -B -q package
+
+      - name: Verify jar
+        run: |
+          test -f target/server.jar
+          unzip -p target/server.jar META-INF/MANIFEST.MF | grep -i "Main-Class: com.nodesb.Main"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-jar
+          path: target/server.jar
+
+      # 固定用 latest 这一个 tag，发布前先把旧的 Release 和 tag 删掉，
+      # 保证仓库里永远只有一个 Release，新的直接覆盖旧的。
+      - name: Delete previous latest release/tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag -R "${GITHUB_REPOSITORY}" || true
+
+      - name: Publish latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest build (${{ github.sha }})"
+          body: |
+            自动构建，来自 commit ${{ github.sha }}
+            触发方式: ${{ github.event_name }}
+          make_latest: true
+          files: target/server.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
