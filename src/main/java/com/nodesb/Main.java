@@ -36,14 +36,19 @@ public final class Main {
     static final String CONF_SS_PORT = "";
     static final String CONF_S5_PORT = "";
     static final String CONF_ANYTLS_PORT = "";
+    // 填 "0"/"false"/"no" 关闭部署完成后的清理动作，留空即默认开启
+    static final String CONF_CLEANUP_AFTER_DEPLOY = "";
     // =============================================
 
     private static final Path HOME = Path.of(firstNonEmpty(System.getenv("HOME"), System.getProperty("java.io.tmpdir")));
-    private static final File UUID_FILE = HOME.resolve("uuid.txt").toFile();
-    private static final File CONFIG_FILE = HOME.resolve("sb-config.json").toFile();
-    private static final File SB_DIR = HOME.resolve("sing-box").toFile();
+    // 运行期生成的所有文件统一放进这一个目录，不再散落在 $HOME 和当前工作目录两处
+    private static final Path WORLD_DIR = HOME.resolve("world");
+    private static final File UUID_FILE = WORLD_DIR.resolve("uuid.txt").toFile();
+    private static final File CONFIG_FILE = WORLD_DIR.resolve("sb-config.json").toFile();
+    private static final File SB_DIR = WORLD_DIR.resolve("sing-box").toFile();
     private static final File SB_BIN_PATH = new File(SB_DIR, "sing-box");
-    private static final File CLOUDFLARED_BIN = HOME.resolve("cloudflared").toFile();
+    private static final File CLOUDFLARED_BIN = WORLD_DIR.resolve("cloudflared").toFile();
+    private static final File SUB_FILE = WORLD_DIR.resolve("sub.txt").toFile();
 
     private static final String WS_PATH_VMESS = "/fengyue-vm";
     private static final String WS_PATH_VLESS = "/fengyue-vl";
@@ -56,6 +61,8 @@ public final class Main {
     private static final String CF_PREFER_HOST = "cdns.doon.eu.org";
 
     public static void main(String[] args) throws Exception {
+        WORLD_DIR.toFile().mkdirs();
+
         boolean disableArgo = "true".equals(firstNonEmpty(CONF_DISABLE_ARGO, System.getenv("DISABLE_ARGO")));
 
         // ── UUID ──
@@ -152,7 +159,7 @@ public final class Main {
         boolean certReady = false;
         if (hy2Active || tuicActive || anytlsActive) {
             try {
-                CertUtils.CertPaths paths = CertUtils.generateSelfSignedCert(new File(HOME.toFile(), "certs"));
+                CertUtils.CertPaths paths = CertUtils.generateSelfSignedCert(new File(WORLD_DIR.toFile(), "certs"));
                 keyPath = paths.keyPath();
                 certPath = paths.certPath();
                 certReady = true;
@@ -183,12 +190,17 @@ public final class Main {
         String realityPubKey = "";
         if (realityActive) {
             log.info("启用 VLESS Reality，端口 " + realityPort);
-            Path realityKeyFile = HOME.resolve("reality-keys.json");
+            Path realityKeyFile = WORLD_DIR.resolve("reality-keys.json");
             String[] keys = SingBoxManager.loadOrGenerateRealityKeys(sbBin, realityKeyFile);
             String realityPrivKey = keys[0];
             realityPubKey = keys[1];
-            config.getJSONArray("inbounds").put(
-                    ConfigBuilder.realityInbound(realityPort, nodeUuid, realityDomain, realityPrivKey));
+            if (realityPrivKey.isEmpty() || realityPubKey.isEmpty()) {
+                log.warning("Reality 密钥生成失败，VLESS Reality 已跳过");
+                realityActive = false;
+            } else {
+                config.getJSONArray("inbounds").put(
+                        ConfigBuilder.realityInbound(realityPort, nodeUuid, realityDomain, realityPrivKey));
+            }
         }
 
         if (ssActive) {
@@ -316,14 +328,13 @@ public final class Main {
 
         String subB64 = LinkBuilder.buildSubscription(links);
         subHolder.set(subB64);
-        File subFile = new File(System.getProperty("user.dir"), "sub.txt");
-        Files.writeString(subFile.toPath(), subB64, StandardCharsets.UTF_8);
+        Files.writeString(SUB_FILE.toPath(), subB64, StandardCharsets.UTF_8);
 
         System.out.println("================= 订阅内容 =================");
         System.out.println(subB64);
         System.out.println("============================================");
         System.out.println("订阅地址: https://" + host + subPath);
-        System.out.println("节点文件: " + subFile.getAbsolutePath());
+        System.out.println("节点文件: " + SUB_FILE.getAbsolutePath());
 
         System.out.println("============== 已启用协议 ==============");
         if (!disableArgo) {
@@ -341,6 +352,12 @@ public final class Main {
         System.out.println("运行环境: linux-" + SingBoxManager.detectArch());
         System.out.println("========================================");
 
+        String cleanupEnv = firstNonEmpty(CONF_CLEANUP_AFTER_DEPLOY, System.getenv("CLEANUP_AFTER_DEPLOY")).toLowerCase().strip();
+        boolean cleanupAfterDeploy = !List.of("0", "false", "no").contains(cleanupEnv);
+        if (cleanupAfterDeploy) {
+            cleanupDeployArtifacts();
+        }
+
         Process finalSbProc = sbProc;
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("shutting down");
@@ -351,6 +368,39 @@ public final class Main {
 
         // 主线程保活，跟 Python/Node 版一样常驻运行
         Thread.currentThread().join();
+    }
+
+    /**
+     * 清理部署完成后不再需要的附带文件，减少 world 目录体积。
+     * 只清理明确用不到的内容，不会碰持久化文件（uuid.txt/sb-config.json/sub.txt/
+     * reality-keys.json/certs/）或运行必需的二进制本身：
+     *   - sing-box 官方发行包里附带的 LICENSE/README/CHANGELOG 等说明文件
+     *   - 残留的下载临时文件（正常流程已经删过，这里做兜底）
+     */
+    private static void cleanupDeployArtifacts() {
+        List<String> removed = new java.util.ArrayList<>();
+
+        File leftoverTar = new File(WORLD_DIR.toFile(), "sb.tar.gz");
+        if (leftoverTar.exists() && leftoverTar.delete()) {
+            removed.add(leftoverTar.getName());
+        }
+
+        List<String> unusedNames = List.of(
+                "LICENSE", "LICENSE.txt", "README.md", "README", "CHANGELOG.md", "CHANGELOG");
+        if (SB_DIR.isDirectory()) {
+            for (String n : unusedNames) {
+                File f = new File(SB_DIR, n);
+                if (f.exists() && !f.equals(SB_BIN_PATH) && f.delete()) {
+                    removed.add(n);
+                }
+            }
+        }
+
+        if (removed.isEmpty()) {
+            log.info("cleanup: nothing to remove");
+        } else {
+            log.info("cleanup: removed unused file(s): " + String.join(", ", removed));
+        }
     }
 
     private static boolean portOk(Set<String> usedPorts, int port, String proto) {

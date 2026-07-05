@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -39,27 +40,94 @@ public final class CloudflaredManager {
         return cfBin.getAbsolutePath();
     }
 
+    private static final Pattern TUNNEL_CONNECTED_PATTERN =
+            Pattern.compile("(?i)registered tunnel connection");
+    private static final Pattern TUNNEL_ERROR_PATTERN =
+            Pattern.compile("(?i)(failed to |unable to |unauthorized|context canceled|connection refused)");
+
     /**
-     * 启动 Argo 隧道，返回可用的域名。
-     * 固定隧道模式（domain+auth 都给了）：跟 Node/Python 版一样，不会真正校验隧道是否连接成功，
-     * 只是无条件等待 3 秒后返回配置的域名。
+     * 启动 Argo 隧道，返回可用的域名；连接不上/无法确认则返回空字符串，
+     * 调用方按空字符串处理，退化为占位域名。
      */
     public static String startTunnel(String cfBin, int argoPort, String argoDomain, String argoAuth) {
         if (!argoDomain.isEmpty() && !argoAuth.isEmpty()) {
-            log.info("启动固定 Argo 隧道...");
-            try {
-                new ProcessBuilder(cfBin, "tunnel", "--edge-ip-version", "auto",
-                        "--no-autoupdate", "run", "--token", argoAuth)
-                        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                        .redirectError(ProcessBuilder.Redirect.DISCARD)
-                        .start();
-            } catch (IOException e) {
-                log.severe("启动固定 Argo 隧道失败: " + e.getMessage());
-            }
-            ProcessUtils.sleepQuietly(3000);
-            return argoDomain;
+            return startFixedTunnel(cfBin, argoDomain, argoAuth);
+        }
+        return startTempTunnel(cfBin, argoPort);
+    }
+
+    /**
+     * 固定隧道模式：监听 cloudflared 的日志输出判断连接是否成功，
+     * 而不是像 Node 版那样无条件等 3 秒就把 ARGO_DOMAIN 当可用域名。
+     * cloudflared 连接成功时会打印类似 "Registered tunnel connection" 的日志；
+     * token 无效/网络异常时通常会打印明确的错误信息或者进程直接退出。
+     */
+    private static String startFixedTunnel(String cfBin, String argoDomain, String argoAuth) {
+        log.info("启动固定 Argo 隧道...");
+        Process proc;
+        try {
+            proc = new ProcessBuilder(cfBin, "tunnel", "--edge-ip-version", "auto",
+                    "--no-autoupdate", "run", "--token", argoAuth)
+                    .redirectErrorStream(true)
+                    .start();
+        } catch (IOException e) {
+            log.severe("启动固定 Argo 隧道失败: " + e.getMessage());
+            return "";
         }
 
+        AtomicBoolean connected = new AtomicBoolean(false);
+        AtomicBoolean failed = new AtomicBoolean(false);
+        CountDownLatch settled = new CountDownLatch(1);
+
+        Thread reader = new Thread(() -> {
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (TUNNEL_CONNECTED_PATTERN.matcher(line).find()) {
+                        connected.set(true);
+                        settled.countDown();
+                        break;
+                    }
+                    if (TUNNEL_ERROR_PATTERN.matcher(line).find()) {
+                        failed.set(true);
+                        settled.countDown();
+                        break;
+                    }
+                }
+            } catch (IOException ignored) {
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+
+        boolean settledInTime;
+        try {
+            settledInTime = settled.await(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            settledInTime = false;
+        }
+
+        if (!proc.isAlive() && !connected.get()) {
+            failed.set(true);
+        }
+
+        if (connected.get()) {
+            log.info("固定 Argo 隧道连接成功");
+            return argoDomain;
+        }
+        if (failed.get()) {
+            log.warning("固定 Argo 隧道未能连接（token 可能无效或网络异常），跳过该域名，生成的节点将使用占位域名");
+            return "";
+        }
+        // 10 秒内既没看到明确成功日志、进程也还活着——给出保守提示但仍然使用配置的域名，
+        // 避免因为日志格式跟预期不一致（不同 cloudflared 版本用词可能有差异）而误判为失败
+        log.warning("未在 10 秒内确认固定 Argo 隧道的连接状态，继续使用配置的 ARGO_DOMAIN 生成链接，请自行确认隧道是否正常连通");
+        return argoDomain;
+    }
+
+    private static String startTempTunnel(String cfBin, int argoPort) {
         log.info("启动临时 Argo 隧道...");
         AtomicReference<String> host = new AtomicReference<>("");
         CountDownLatch done = new CountDownLatch(1);
