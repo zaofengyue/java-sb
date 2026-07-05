@@ -19,7 +19,7 @@ public final class Main {
     private static final Logger log = Logger.getLogger("node-sb");
 
     // ========== 预留配置，留空则自动识别 ==========
-    static final String CONF_UUID = "8295a139-4b22-4610-92db-bdbed2038631";
+    static final String CONF_UUID = "1295a139-4b22-4610-92db-bdbed2038631";
     static final String CONF_PORT = "";
     static final String CONF_ARGO_PORT = "";
     static final String CONF_NAME = "";
@@ -29,13 +29,13 @@ public final class Main {
     // 填 "true" 禁用 Argo，留空则启用
     static final String CONF_DISABLE_ARGO = "";
     // 可选协议，填写端口则启动对应协议，留空不启动
-    static final String CONF_HY2_PORT = "30091";
-    static final String CONF_TUIC_PORT = "";
-    static final String CONF_REALITY_PORT = "30091";
+    static final String CONF_HY2_PORT = "";
+    static final String CONF_TUIC_PORT = "30221";
+    static final String CONF_REALITY_PORT = "";
     static final String CONF_REALITY_DOMAIN = "";
     static final String CONF_SS_PORT = "";
     static final String CONF_S5_PORT = "";
-    static final String CONF_ANYTLS_PORT = "";
+    static final String CONF_ANYTLS_PORT = "30221";
     // 填 "0"/"false"/"no" 关闭部署完成后的清理动作，留空即默认开启
     static final String CONF_CLEANUP_AFTER_DEPLOY = "";
     // =============================================
