@@ -1,12 +1,8 @@
 # node-sb (Java 版)
 
-基于 sing-box 内核的多协议代理工具，Node.js 版 `index.js` 的 Java 翻译版本。支持 Argo 隧道下的
-VMess / VLESS / Trojan（WS + TLS），以及可选的 Hysteria2 / TUIC v5 / VLESS Reality /
+基于 sing-box 内核的多协议代理工具，支持 Argo 隧道下的 VMess / VLESS / Trojan（WS + TLS），以及可选的 Hysteria2 / TUIC v5 / VLESS Reality /
 Shadowsocks 2022 / Socks5 / AnyTLS。仅支持 Linux 部署。
 
-产物是单个 `server.jar`（fat jar，已包含唯一的外部依赖 `org.json`），拿到目标机器上
-`java -jar server.jar` 直接运行，不需要额外安装依赖包；但**修改代码后需要重新构建**，不能像
-Python/Node 版那样改完源码直接运行——这是 Java 编译型语言本身决定的，不是这份代码的限制。
 
 ## 部署方式
 
@@ -49,5 +45,5 @@ java -jar server.jar
 | `SS_PORT` | 填端口号启用 Shadowsocks 2022（TCP） | 留空不启用 |
 | `S5_PORT` | 填端口号启用 Socks5（TCP） | 留空不启用 |
 | `ANYTLS_PORT` | 填端口号启用 AnyTLS（TCP），需要证书，且要求 sing-box ≥ 1.12.0 | 留空不启用 |
-| `NAME` | 节点名称前缀 | 自动识别（国家代码-ASN 运营商），识别失败则为 `sb` |
+| `NAME` | 节点名称前缀 | 自动识别 |
 | `CLEANUP_AFTER_DEPLOY` | 部署成功、生成订阅后是否自动清理 sing-box 发行包里用不到的附带文件（`LICENSE`/`README.md` 等），设为 `0`/`false`/`no` 可关闭 | `true` |
