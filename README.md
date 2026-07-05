@@ -28,7 +28,7 @@ java -jar server.jar
 ## 环境变量
 
 也可以不设环境变量，直接改源码里的配置区，重新构建后生效，优先级高于环境变量：
-👉 [`Main.java` 的 `CONF_*` 配置区](src/main/java/com/nodesb/Main.java#L21-L41)
+👉 [环境变量配置区](src/main/java/com/nodesb/Main.java#L21-L41)
 
 | 变量名 | 说明 | 默认值 |
 |---|---|---|
