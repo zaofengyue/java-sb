@@ -19,7 +19,7 @@ public final class Main {
     private static final Logger log = Logger.getLogger("node-sb");
 
     // ========== 预留配置，留空则自动识别 ==========
-    static final String CONF_UUID = "1295a139-4b22-4610-92db-bdbed2038631";
+    static final String CONF_UUID = "";
     static final String CONF_PORT = "";
     static final String CONF_ARGO_PORT = "";
     static final String CONF_NAME = "";
