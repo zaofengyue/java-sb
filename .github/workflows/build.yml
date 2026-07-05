@@ -2,12 +2,9 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch: {}
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -37,23 +34,14 @@ jobs:
           name: server-jar
           path: target/server.jar
 
-      # 固定用 latest 这一个 tag，发布前先把旧的 Release 和 tag 删掉，
-      # 保证仓库里永远只有一个 Release，新的直接覆盖旧的。
-      - name: Delete previous latest release/tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete latest --yes --cleanup-tag -R "${GITHUB_REPOSITORY}" || true
-
-      - name: Publish latest release
+      # 滚动发布：固定用 "latest" 这个 tag，每次构建覆盖同一个 Release，
+      # 不把 commit SHA 之类的东西塞进名字/tag 里
+      - name: Publish to GitHub Release (latest)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Latest build (${{ github.sha }})"
-          body: |
-            自动构建，来自 commit ${{ github.sha }}
-            触发方式: ${{ github.event_name }}
-          make_latest: true
+          name: server.jar（最新构建）
           files: target/server.jar
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
