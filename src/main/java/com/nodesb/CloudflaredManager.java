@@ -127,41 +127,90 @@ public final class CloudflaredManager {
         return argoDomain;
     }
 
+    /**
+     * 临时隧道模式：跟固定隧道一样做连接状态检测，而不是只等拿到域名。
+     * 关键改动：
+     *   1. 加 --protocol http2，强制走 TCP 而不是默认的 QUIC(UDP)。很多云主机/容器
+     *      平台会限制 UDP 出站（尤其是非标准端口），quick tunnel 默认走 QUIC 时会
+     *      连不上 Cloudflare edge 但进程不退出、也没有明显报错，表现就是"一直卡着，
+     *      30 秒后超时"——这也是"临时隧道不通"最常见的原因。
+     *   2. 边读日志边检测：拿到域名 -> 成功；命中错误关键词 或 进程提前退出 -> 判定
+     *      为失败并立刻返回，不用傻等 30 秒。
+     *   3. 失败/超时时把最近的日志行打印出来，方便直接从控制台看出卡在哪一步，而不是
+     *      只有一句"超时"。
+     */
     private static String startTempTunnel(String cfBin, int argoPort) {
         log.info("启动临时 Argo 隧道...");
-        AtomicReference<String> host = new AtomicReference<>("");
-        CountDownLatch done = new CountDownLatch(1);
+        Process proc;
         try {
-            Process proc = new ProcessBuilder(cfBin, "tunnel", "--edge-ip-version", "auto",
+            proc = new ProcessBuilder(cfBin, "tunnel", "--edge-ip-version", "auto",
+                    "--protocol", "http2",
                     "--no-autoupdate", "--url", "http://127.0.0.1:" + argoPort)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectErrorStream(true)
                     .start();
-
-            Thread reader = new Thread(() -> {
-                try (BufferedReader br = new BufferedReader(
-                        new InputStreamReader(proc.getErrorStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = br.readLine()) != null) {
-                        Matcher m = TRYCLOUDFLARE_PATTERN.matcher(line);
-                        if (m.find() && host.get().isEmpty()) {
-                            host.set(m.group(1));
-                            log.info("临时隧道域名: " + host.get());
-                            done.countDown();
-                            break;
-                        }
-                    }
-                } catch (IOException ignored) {
-                }
-            });
-            reader.setDaemon(true);
-            reader.start();
-
-            if (!done.await(30, TimeUnit.SECONDS)) {
-                log.info("临时隧道域名获取超时");
-            }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             log.severe("启动临时 Argo 隧道失败: " + e.getMessage());
+            return "";
         }
-        return host.get();
+
+        AtomicReference<String> host = new AtomicReference<>("");
+        AtomicBoolean failed = new AtomicBoolean(false);
+        CountDownLatch done = new CountDownLatch(1);
+        List<String> recentLines = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        Thread reader = new Thread(() -> {
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    recentLines.add(line);
+                    if (recentLines.size() > 20) {
+                        recentLines.remove(0);
+                    }
+                    Matcher m = TRYCLOUDFLARE_PATTERN.matcher(line);
+                    if (m.find() && host.get().isEmpty()) {
+                        host.set(m.group(1));
+                        log.info("临时隧道域名: " + host.get());
+                        done.countDown();
+                        break;
+                    }
+                    if (TUNNEL_ERROR_PATTERN.matcher(line).find()) {
+                        failed.set(true);
+                        done.countDown();
+                        break;
+                    }
+                }
+            } catch (IOException ignored) {
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+
+        boolean settledInTime;
+        try {
+            settledInTime = done.await(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            settledInTime = false;
+        }
+
+        if (!host.get().isEmpty()) {
+            return host.get();
+        }
+
+        if (!proc.isAlive()) {
+            failed.set(true);
+        }
+
+        if (failed.get()) {
+            log.severe("临时 Argo 隧道连接失败，cloudflared 最近日志：\n"
+                    + String.join("\n", recentLines));
+        } else if (!settledInTime) {
+            log.warning("临时隧道域名获取超时（30 秒），cloudflared 进程仍在运行但未取得域名，"
+                    + "常见原因：出站网络限制（如 UDP/非常规端口被限制，已默认加 --protocol http2 规避大部分此类情况）"
+                    + "或当前网络访问 Cloudflare edge 较慢。最近日志：\n"
+                    + String.join("\n", recentLines));
+        }
+        return "";
     }
 }
