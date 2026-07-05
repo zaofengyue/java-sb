@@ -6,6 +6,11 @@ on:
       - main
   workflow_dispatch: {}
 
+# 关键修复：GITHUB_TOKEN 默认只有只读权限，不声明这个会导致
+# 创建/更新 Release 时报 "Resource not accessible by integration" (403)
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
