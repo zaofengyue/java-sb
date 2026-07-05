@@ -1,4 +1,4 @@
-# node-sb (Java 版)
+# java-sb 
 
 基于 sing-box 内核的多协议代理工具，支持 Argo 隧道下的 VMess / VLESS / Trojan（WS + TLS），以及可选的 Hysteria2 / TUIC v5 / VLESS Reality /
 Shadowsocks 2022 / Socks5 / AnyTLS。仅支持 Linux 部署。
