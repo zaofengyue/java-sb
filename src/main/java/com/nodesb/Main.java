@@ -29,9 +29,9 @@ public final class Main {
     // 填 "true" 禁用 Argo，留空则启用
     static final String CONF_DISABLE_ARGO = "";
     // 可选协议，填写端口则启动对应协议，留空不启动
-    static final String CONF_HY2_PORT = "25565";
-    static final String CONF_TUIC_PORT = "25575";
-    static final String CONF_REALITY_PORT = "25575";
+    static final String CONF_HY2_PORT = "30091";
+    static final String CONF_TUIC_PORT = "";
+    static final String CONF_REALITY_PORT = "30091";
     static final String CONF_REALITY_DOMAIN = "";
     static final String CONF_SS_PORT = "";
     static final String CONF_S5_PORT = "";
