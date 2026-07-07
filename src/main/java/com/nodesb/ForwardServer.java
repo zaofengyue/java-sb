@@ -7,6 +7,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
@@ -20,10 +21,19 @@ public class ForwardServer implements Runnable {
 
     private final int port;
     private final Map<String, Integer> pathToPort;
+    private final CountDownLatch bound = new CountDownLatch(1);
 
     public ForwardServer(int port, Map<String, Integer> pathToPort) {
         this.port = port;
         this.pathToPort = pathToPort;
+    }
+
+    /**
+     * 阻塞等待端口真正 bind 成功（或超时）。调用方（Main）应该在起 cloudflared 隧道之前
+     * 等这个方法返回，避免隧道一起来就把流量转发到一个还没监听的端口上。
+     */
+    public boolean awaitBound(long timeoutMillis) throws InterruptedException {
+        return bound.await(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -32,6 +42,7 @@ public class ForwardServer implements Runnable {
             srv.setReuseAddress(true);
             srv.bind(new InetSocketAddress("127.0.0.1", port));
             log.info("Argo 转发服务启动，端口 " + port);
+            bound.countDown();
             ExecutorService pool = Executors.newCachedThreadPool();
             while (true) {
                 Socket client = srv.accept();
@@ -39,6 +50,7 @@ public class ForwardServer implements Runnable {
             }
         } catch (IOException e) {
             log.severe("Argo 转发服务启动失败: " + e.getMessage());
+            bound.countDown(); // 即使失败也要放行等待方，不然 Main 会一直卡住
         }
     }
 

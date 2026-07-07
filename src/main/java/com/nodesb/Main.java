@@ -30,12 +30,12 @@ public final class Main {
     static final String CONF_DISABLE_ARGO = "";
     // 可选协议，填写端口则启动对应协议，留空不启动
     static final String CONF_HY2_PORT = "";
-    static final String CONF_TUIC_PORT = "30221";
+    static final String CONF_TUIC_PORT = "";
     static final String CONF_REALITY_PORT = "";
     static final String CONF_REALITY_DOMAIN = "";
     static final String CONF_SS_PORT = "";
     static final String CONF_S5_PORT = "";
-    static final String CONF_ANYTLS_PORT = "30221";
+    static final String CONF_ANYTLS_PORT = "";
     // 填 "0"/"false"/"no" 关闭部署完成后的清理动作，留空即默认开启
     static final String CONF_CLEANUP_AFTER_DEPLOY = "";
     // =============================================
@@ -278,9 +278,16 @@ public final class Main {
                     WS_PATH_VMESS, V_VMESS_PORT,
                     WS_PATH_VLESS, V_VLESS_PORT,
                     WS_PATH_TROJAN, V_TROJAN_PORT);
-            Thread t = new Thread(new ForwardServer(argoPort, pathToPort));
+            ForwardServer forwardServer = new ForwardServer(argoPort, pathToPort);
+            Thread t = new Thread(forwardServer);
             t.setDaemon(true);
             t.start();
+            // 必须等端口真正 bind 成功再去启动 cloudflared 隧道，
+            // 否则隧道建好后第一时间转发流量过来，本地端口可能还没监听，
+            // 会导致连接被拒绝。
+            if (!forwardServer.awaitBound(5000)) {
+                log.warning("等待 Argo 转发服务绑定端口超时，继续往下走，但隧道流量可能暂时连不上");
+            }
         }
 
         // ── HTTP 服务（伪装页 + 订阅）──
